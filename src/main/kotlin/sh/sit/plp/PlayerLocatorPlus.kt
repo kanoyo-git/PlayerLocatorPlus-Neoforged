@@ -1,54 +1,85 @@
 package sh.sit.plp
 
-import net.fabricmc.api.ModInitializer
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
-import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry
-import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents
+import net.neoforged.bus.api.IEventBus
+import net.neoforged.fml.common.Mod
+import net.neoforged.neoforge.common.NeoForge
+import net.neoforged.neoforge.event.RegisterCommandsEvent
+import net.neoforged.neoforge.event.entity.player.PlayerEvent
+import net.neoforged.neoforge.event.server.ServerStoppedEvent
+import net.neoforged.neoforge.event.tick.ServerTickEvent
+import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent
+import net.neoforged.neoforge.network.registration.PayloadRegistrar
 import net.minecraft.core.registries.Registries
+import net.minecraft.resources.ResourceLocation
 import net.minecraft.tags.TagKey
-import net.minecraft.resources.Identifier
 import org.slf4j.LoggerFactory
 import sh.sit.plp.color.PLPCommand
 import sh.sit.plp.config.ConfigManager
 import sh.sit.plp.network.ModConfigS2CPayload
 import sh.sit.plp.network.PlayerLocationsS2CPayload
 
-object PlayerLocatorPlus : ModInitializer {
-    const val MOD_ID = "player-locator-plus"
-    val logger = LoggerFactory.getLogger("player-locator-plus")!!
-
-    val HIDING_EQUIPMENT_TAG = TagKey.create(Registries.ITEM, Identifier.fromNamespaceAndPath("player-locator-plus", "hiding_equipment"))
-
-    private var tickCounter = 0
-
-    val config get() = ConfigManager.getConfig()
-
-    override fun onInitialize() {
+@Mod(PlayerLocatorPlus.MOD_ID)
+class PlayerLocatorPlus(modEventBus: IEventBus) {
+    init {
         ConfigManager.init()
 
-        PayloadTypeRegistry.clientboundPlay().register(PlayerLocationsS2CPayload.ID, PlayerLocationsS2CPayload.CODEC)
-        PayloadTypeRegistry.clientboundPlay().register(ModConfigS2CPayload.ID, ModConfigS2CPayload.CODEC)
+        modEventBus.addListener(::registerPayloads)
+        NeoForge.EVENT_BUS.addListener(::onPlayerLogin)
+        NeoForge.EVENT_BUS.addListener(::onServerTick)
+        NeoForge.EVENT_BUS.addListener(::onServerStopped)
+        NeoForge.EVENT_BUS.addListener(::onRegisterCommands)
 
-        ServerPlayConnectionEvents.JOIN.register(ServerPlayConnectionEvents.Join { handler, _, _ ->
-            BarUpdater.fullResend(handler.player)
-        })
+        logger.info("Player Locator Plus initialized")
+    }
 
-        ServerTickEvents.END_SERVER_TICK.register(ServerTickEvents.EndTick { server ->
-            if (tickCounter < config.ticksBetweenUpdates) {
-                tickCounter++
-                return@EndTick
-            }
-            tickCounter = 0
+    private fun registerPayloads(event: RegisterPayloadHandlersEvent) {
+        val registrar: PayloadRegistrar = event.registrar("1")
+        registrar.playToClient(PlayerLocationsS2CPayload.TYPE, PlayerLocationsS2CPayload.CODEC) { payload, context ->
+            context.enqueueWork { PlayerLocatorPlusClient.handlePlayerLocations(payload) }
+        }
+        registrar.playToClient(ModConfigS2CPayload.TYPE, ModConfigS2CPayload.CODEC) { payload, context ->
+            context.enqueueWork { PlayerLocatorPlusClient.handleServerConfig(payload) }
+        }
+    }
 
-            BarUpdater.update(server)
-        })
-        ServerLifecycleEvents.SERVER_STOPPED.register(ServerLifecycleEvents.ServerStopped {
-            BarUpdater.reset()
-        })
+    private fun onPlayerLogin(event: PlayerEvent.PlayerLoggedInEvent) {
+        val player = event.entity as? net.minecraft.server.level.ServerPlayer ?: return
+        BarUpdater.fullResend(player)
+        ConfigManager.sendConfig(player)
+    }
 
-        PLPCommand.register()
+    private fun onServerTick(event: ServerTickEvent.Post) {
+        if (tickCounter < config.ticksBetweenUpdates) {
+            tickCounter++
+            return
+        }
+        tickCounter = 0
 
-        logger.info("hi!")
+        BarUpdater.update(event.server)
+    }
+
+    private fun onServerStopped(event: ServerStoppedEvent) {
+        BarUpdater.reset()
+        ConfigManager.clearServer()
+    }
+
+    private fun onRegisterCommands(event: RegisterCommandsEvent) {
+        PLPCommand.register(event.dispatcher)
+    }
+
+    companion object {
+        const val MOD_ID = "player_locator_plus"
+        const val RESOURCE_NAMESPACE = "player-locator-plus"
+
+        val logger = LoggerFactory.getLogger(MOD_ID)!!
+
+        val HIDING_EQUIPMENT_TAG: TagKey<net.minecraft.world.item.Item> = TagKey.create(
+            Registries.ITEM,
+            ResourceLocation.fromNamespaceAndPath(RESOURCE_NAMESPACE, "hiding_equipment"),
+        )
+
+        private var tickCounter = 0
+
+        val config get() = ConfigManager.getConfig()
     }
 }

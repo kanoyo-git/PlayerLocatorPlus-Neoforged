@@ -2,7 +2,7 @@
 
 Track other players' locations on your experience bar like a compass!
 
-<img alt="Requires Cloth Config API" height="56" src="https://cdn.jsdelivr.net/npm/@intergrav/devins-badges@3/assets/cozy/requires/cloth-config-api_vector.svg"> <img alt="Requires Fabric API" height="56" src="https://cdn.jsdelivr.net/npm/@intergrav/devins-badges@3/assets/cozy/requires/fabric-api_vector.svg"> <img alt="Requires Fabric Langauge Kotlin" height="56" src="requires_kotlin.svg">
+NeoForge 1.21.1 edition. Build and run it with Java 21. The released jar includes its Kotlin and TOML runtime dependencies.
 
 ![Screenshot of the player locator](screenshot1.png)
 
@@ -27,8 +27,8 @@ There are three ways to hide from the player locator:
 
 ## Configuration
 
-The config is available at `config/player-locator-plus.toml`.
-You can also access the configuration screen with Mod Menu.
+The config is available at `config/player-locator-plus.toml`. Edit it and run `/plp reload`
+as an operator (or restart the game/server) to apply changes.
 
 Server parameters:
 
@@ -48,19 +48,16 @@ Server parameters:
   Close players (inside the entity render distance) do not depend on this parameter as much.
   Default: `5` (four times per second)
 - `sneakingHides`: Whether sneaking hides players from the locator. Default: `true`
-- `pumpkinHides`: Whether wearing a pumpkin (or any other `gaze_disguise_equipment`) hides
-  players from the locator.
+- `pumpkinHides`: Whether wearing a carved pumpkin hides players from the locator.
   Default: `true`
 - `mobHeadsHide`: Whether wearing a mob/player head hides players from the locator. The exact list can be edited with a datapack by changing `data/player-locator-plus/tags/item/hiding_equipment.json` (see default [here](https://github.com/timas130/PlayerLocatorPlus/blob/main/src/main/resources/data/player-locator-plus/tags/item/hiding_equipment.json)). Default: `true`
 - `invisibilityHides`: Whether being invisible hides players from the locator. Default: `true`
-- `colorMode`: How to determine the color of the markers. Vanilla waypoints always override this setting. Available modes:
+- `colorMode`: How to determine the color of the markers. Available modes:
   - `UUID` (default): Assign a random color based on the UUID of the player.
   - `TEAM_COLOR`: Use the color of the player's team (or white)
   - `CUSTOM`: Allow every player to assign a color with the `/plp color` command
   - `CONSTANT`: Everyone has the same color from the `constantColor` option
 - `constantColor`: Color used when `colorMode` is `CONSTANT`. Default: `0xFFFFFF` (white)
-- `allowVanillaLocatorBar`: Allow sending waypoint to vanilla players without the mod.  Default: `true`
-
 Client parameters:
 
 - `visible`: Show the player locator. Default: `true`
@@ -75,8 +72,6 @@ Client parameters:
 - `alwaysShowHeads`: Always show player heads, regardless of whether Tab is pressed. Default: `false`
 - `showHeadsOnTab`: Show player heads when Tab is pressed. Default: `true`
 - `showNamesOnTab`: Show player names when Tab is pressed. Default: `true`
-- `showVanillaWaypoints`: Show custom waypoints created by adding the `waypoint_transmit_range` attribute. Default: `true`
-
 ## Acknowledgements
 
 Originally introduced in Minecraft: Bedrock Edition Preview

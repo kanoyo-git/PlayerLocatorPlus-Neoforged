@@ -4,98 +4,46 @@ import com.akuleshov7.ktoml.annotations.TomlInteger
 import com.akuleshov7.ktoml.writers.IntegerRepresentation
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import me.shedaniel.autoconfig.ConfigData
-import me.shedaniel.autoconfig.annotation.Config
-import me.shedaniel.autoconfig.annotation.ConfigEntry
-import me.shedaniel.clothconfig2.gui.entries.SelectionListEntry.Translatable
 import net.minecraft.network.FriendlyByteBuf
 import net.minecraft.network.codec.StreamCodec
 import sh.sit.plp.PlayerLocatorPlus
 
-@Config(name = PlayerLocatorPlus.MOD_ID)
 @Serializable
-class ModConfig : ConfigData {
+class ModConfig {
     var enabled = true
-    @ConfigEntry.Gui.Tooltip
     var sendServerConfig = true
-    @ConfigEntry.Gui.Tooltip
     var sendDistance = true
-    @ConfigEntry.Gui.Tooltip
     var maxDistance = 0
-    @ConfigEntry.Gui.Tooltip
     var directionPrecision = 300f
-    @ConfigEntry.Gui.Tooltip
     var ticksBetweenUpdates = 5
     var sneakingHides = true
     var pumpkinHides = true
-    @ConfigEntry.Gui.Tooltip
     var mobHeadsHide = true
     var invisibilityHides = true
 
-    @ConfigEntry.Category("style")
-    @ConfigEntry.Gui.Tooltip
     var visible = true
-    @ConfigEntry.Category("style")
     var visibleEmpty = false
-    @ConfigEntry.Category("style")
     var alwaysVisibleInSpectator = false
-    @ConfigEntry.Category("style")
     var acceptServerConfig = true
-    @ConfigEntry.Category("style")
-    @ConfigEntry.Gui.Tooltip
     var fadeMarkers = false
-    @ConfigEntry.Category("style")
     var fadeStart = 100
-    @ConfigEntry.Category("style")
     var fadeEnd = 1000
-    @ConfigEntry.Category("style")
     var fadeEndOpacity = 0.3f
-    @ConfigEntry.Category("style")
-    @ConfigEntry.Gui.Tooltip
     var shrinkMarkers = true
-    @ConfigEntry.Category("style")
     var shrinkStart = 70
-    @ConfigEntry.Category("style")
     var shrinkEnd = 500
-    @ConfigEntry.Category("style")
-    @ConfigEntry.Gui.Tooltip
     var showHeight = true
-    @ConfigEntry.Category("style")
     var alwaysShowHeads = false
-    @ConfigEntry.Category("style")
-    @ConfigEntry.Gui.Tooltip
     var showHeadsOnTab = true
-    @ConfigEntry.Category("style")
-    @ConfigEntry.Gui.Tooltip
     var showNamesOnTab = true
 
-    @ConfigEntry.Category("color")
-    @ConfigEntry.Gui.EnumHandler(option = ConfigEntry.Gui.EnumHandler.EnumDisplayOption.BUTTON)
     var colorMode = ColorMode.UUID
-    @ConfigEntry.Category("color")
-    @ConfigEntry.ColorPicker
-    @ConfigEntry.Gui.Tooltip
     @TomlInteger(IntegerRepresentation.HEX)
     var constantColor = 0xFFFFFF
 
-    @ConfigEntry.Category("vanilla")
-    var showVanillaWaypoints = true
-    @ConfigEntry.Category("vanilla")
-    @ConfigEntry.Gui.Tooltip
-    var allowVanillaLocatorBar = true
+    enum class ColorMode { UUID, TEAM_COLOR, CUSTOM, CONSTANT }
 
-    enum class ColorMode(private val key: String) : Translatable {
-        UUID("uuid"),
-        TEAM_COLOR("team_color"),
-        CUSTOM("custom"),
-        CONSTANT("constant");
-
-        override fun getKey(): String {
-            return "text.autoconfig.player-locator-plus.option.colorMode.$key"
-        }
-    }
-
-    override fun validatePostLoad() {
+    fun validatePostLoad() {
         if (fadeStart < 0) {
             PlayerLocatorPlus.logger.warn("invalid config: fadeStart < 0")
             fadeStart = 0

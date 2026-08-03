@@ -1,25 +1,23 @@
 package sh.sit.plp
 
-import com.mojang.datafixers.util.Either
-import net.fabricmc.api.ClientModInitializer
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking
 import net.minecraft.client.Minecraft
-import net.minecraft.client.renderer.RenderPipelines
 import net.minecraft.client.DeltaTracker
-import net.minecraft.client.gui.GuiGraphicsExtractor
-import net.minecraft.client.gui.components.PlayerFaceExtractor
-import net.minecraft.client.renderer.entity.LivingEntityRenderer
-import net.minecraft.world.entity.LivingEntity
-import net.minecraft.resources.Identifier
-import net.minecraft.util.Mth
+import net.minecraft.client.gui.GuiGraphics
+import net.minecraft.client.gui.components.PlayerFaceRenderer
+import net.minecraft.resources.ResourceLocation
 import net.minecraft.world.phys.Vec3
-import net.minecraft.util.profiling.Profiler
 import net.minecraft.world.level.GameType
+import net.neoforged.api.distmarker.Dist
+import net.neoforged.bus.api.SubscribeEvent
+import net.neoforged.fml.common.EventBusSubscriber
+import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent
+import net.neoforged.neoforge.client.gui.VanillaGuiLayers
 import org.joml.Vector2d
 import org.joml.Vector3f
-import sh.sit.plp.PlayerLocatorPlus.config
-import sh.sit.plp.config.ConfigManagerClient
+import sh.sit.plp.PlayerLocatorPlus.Companion.config
+import sh.sit.plp.config.ConfigManager
+import sh.sit.plp.network.ModConfigS2CPayload
 import sh.sit.plp.network.PlayerLocationsS2CPayload
 import sh.sit.plp.network.RelativePlayerLocation
 import sh.sit.plp.util.Animatable
@@ -31,21 +29,22 @@ import kotlin.math.round
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-object PlayerLocatorPlusClient : ClientModInitializer {
-    private val EXPERIENCE_BAR_BACKGROUND_TEXTURE = Identifier.fromNamespaceAndPath(PlayerLocatorPlus.MOD_ID, "hud/empty_bar")
-    private val PLAYER_MARK_TEXTURE = Identifier.fromNamespaceAndPath(PlayerLocatorPlus.MOD_ID, "hud/player_mark")
-    private val PLAYER_MARK_UP_TEXTURE = Identifier.fromNamespaceAndPath(PlayerLocatorPlus.MOD_ID, "hud/player_mark_up")
-    private val PLAYER_MARK_DOWN_TEXTURE = Identifier.fromNamespaceAndPath(PlayerLocatorPlus.MOD_ID, "hud/player_mark_down")
-    private val PLAYER_MARK_WHITE_OUTLINE_TEXTURE = Identifier.fromNamespaceAndPath(PlayerLocatorPlus.MOD_ID, "hud/player_mark_white_outline")
+@EventBusSubscriber(modid = PlayerLocatorPlus.MOD_ID, value = [Dist.CLIENT], bus = EventBusSubscriber.Bus.MOD)
+object PlayerLocatorPlusClient {
+    private val EXPERIENCE_BAR_BACKGROUND_TEXTURE = ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "hud/empty_bar")
+    private val PLAYER_MARK_TEXTURE = ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "hud/player_mark")
+    private val PLAYER_MARK_UP_TEXTURE = ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "hud/player_mark_up")
+    private val PLAYER_MARK_DOWN_TEXTURE = ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "hud/player_mark_down")
+    private val PLAYER_MARK_WHITE_OUTLINE_TEXTURE = ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "hud/player_mark_white_outline")
 
     private val PLAYER_MARK_TEXTURES = arrayOf(
-        Identifier.fromNamespaceAndPath(PlayerLocatorPlus.MOD_ID, "hud/player_mark_0"),
-        Identifier.fromNamespaceAndPath(PlayerLocatorPlus.MOD_ID, "hud/player_mark_1"),
-        Identifier.fromNamespaceAndPath(PlayerLocatorPlus.MOD_ID, "hud/player_mark_2"),
-        Identifier.fromNamespaceAndPath(PlayerLocatorPlus.MOD_ID, "hud/player_mark_3"),
-        Identifier.fromNamespaceAndPath(PlayerLocatorPlus.MOD_ID, "hud/player_mark_4"),
-        Identifier.fromNamespaceAndPath(PlayerLocatorPlus.MOD_ID, "hud/player_mark_5"),
-        Identifier.fromNamespaceAndPath(PlayerLocatorPlus.MOD_ID, "hud/player_mark_6"),
+        ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "hud/player_mark_0"),
+        ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "hud/player_mark_1"),
+        ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "hud/player_mark_2"),
+        ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "hud/player_mark_3"),
+        ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "hud/player_mark_4"),
+        ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "hud/player_mark_5"),
+        ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "hud/player_mark_6"),
     )
 
     private const val NAME_PLAQUE_PADDING_X = 4
@@ -69,32 +68,42 @@ object PlayerLocatorPlusClient : ClientModInitializer {
         val progress: Double
     )
 
-    override fun onInitializeClient() {
-        ConfigManagerClient.init()
+    @SubscribeEvent
+    @JvmStatic
+    fun registerGuiLayers(event: RegisterGuiLayersEvent) {
+        event.registerAbove(
+            VanillaGuiLayers.EXPERIENCE_LEVEL,
+            ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "player_locator"),
+            ::render,
+        )
+    }
 
-        ClientPlayNetworking.registerGlobalReceiver(PlayerLocationsS2CPayload.ID) { payload, _ ->
-            relativePositionsLock.lock()
+    fun handlePlayerLocations(payload: PlayerLocationsS2CPayload) {
+        relativePositionsLock.lock()
+        try {
             if (payload.fullReset) {
                 relativePositions.clear()
             } else {
-                payload.removeUuids.forEach {
-                    relativePositions.remove(it)
-                }
+                payload.removeUuids.forEach(relativePositions::remove)
             }
 
-            for (update in payload.locationUpdates) {
-                relativePositions.compute(update.playerUuid) { _, _ ->
-                    update
-                }
-            }
-
+            payload.locationUpdates.forEach { update -> relativePositions[update.playerUuid] = update }
             lastUpdatePosition = Minecraft.getInstance().player?.position() ?: Vec3.ZERO
+        } finally {
             relativePositionsLock.unlock()
         }
+    }
 
-        ClientPlayConnectionEvents.DISCONNECT.register { _, _ ->
-            relativePositionsLock.lock()
+    fun handleServerConfig(payload: ModConfigS2CPayload) {
+        ConfigManager.configOverride = payload.config
+    }
+
+    fun clearClientState() {
+        relativePositionsLock.lock()
+        try {
             relativePositions.clear()
+            ConfigManager.configOverride = null
+        } finally {
             relativePositionsLock.unlock()
         }
     }
@@ -104,7 +113,6 @@ object PlayerLocatorPlusClient : ClientModInitializer {
 
         val player = client.player ?: return false
         val interactionManager = client.gameMode ?: return false
-        val hud = client.gui.hud
         val networkHandler = client.connection
 
         // hide when disabled
@@ -112,22 +120,20 @@ object PlayerLocatorPlusClient : ClientModInitializer {
             return false
         }
         // hide in F1
-        if (hud.isHidden) {
+        if (client.options.hideGui) {
             return false
         }
         // hide when there are no other players online and relativePositions is empty
         if (
             !config.visibleEmpty &&
             relativePositions.isEmpty() &&
-            networkHandler?.onlinePlayers?.any { it.profile.id != player.uuid } != true &&
-            getVanillaWaypoints(client).isEmpty()
+            networkHandler?.onlinePlayers?.any { it.profile.id != player.uuid } != true
         ) {
             return false
         }
         // hide in spectator mode when the spectator menu is not open
         if (
             interactionManager.playerMode == GameType.SPECTATOR &&
-            !hud.spectatorGui.isMenuActive &&
             !config.alwaysVisibleInSpectator
         ) {
             return false
@@ -136,13 +142,12 @@ object PlayerLocatorPlusClient : ClientModInitializer {
         return true
     }
 
-    fun render(context: GuiGraphicsExtractor, tickCounter: DeltaTracker) {
+    fun render(context: GuiGraphics, tickCounter: DeltaTracker) {
         if (!config.visible) return
 
         if (!isBarVisible()) return
 
         val client = Minecraft.getInstance()
-        Profiler.get().push("plp")
         val player = client.player ?: return
         val interactionManager = client.gameMode ?: return
 
@@ -152,7 +157,7 @@ object PlayerLocatorPlusClient : ClientModInitializer {
 
         val barRendered = player.jumpableVehicle() != null || interactionManager.hasExperience()
         if (!barRendered) {
-            context.blitSprite(RenderPipelines.GUI_TEXTURED, EXPERIENCE_BAR_BACKGROUND_TEXTURE, x, y, barWidth, 5)
+            context.blitSprite(EXPERIENCE_BAR_BACKGROUND_TEXTURE, x, y, barWidth, 5)
         }
 
         relativePositionsLock.lock()
@@ -161,8 +166,8 @@ object PlayerLocatorPlusClient : ClientModInitializer {
 
         val isTabPressed = client.options.keyPlayerList.isDown
 
-        for (position in (relativePositions.values.asSequence() + getVanillaWaypoints(client))) {
-            val playerMarker = player.level().getEntity(position.playerUuid)
+        for (position in relativePositions.values) {
+            val playerMarker = player.level().getPlayerByUUID(position.playerUuid)
             val actualPosition = playerMarker
                 ?.getPosition(tickCounter.getGameTimeDeltaPartialTick(false))
             val direction = if (actualPosition != null) {
@@ -233,60 +238,25 @@ object PlayerLocatorPlusClient : ClientModInitializer {
                     PLAYER_MARK_TEXTURE
                 }
 
-                context.blitSprite(
-                    /* renderPipeline = */ RenderPipelines.GUI_TEXTURED,
-                    /* location = */ texture,
-                    /* x = */ markX,
-                    /* y = */ y - 1,
-                    /* width = */ 7,
-                    /* height = */ 7,
-                    /* color = */ color,
-                )
+                drawSprite(context, texture, markX, y - 1, 7, 7, color)
             } else {
-                context.blitSprite(
-                    /* renderPipeline = */ RenderPipelines.GUI_TEXTURED,
-                    /* location = */ PLAYER_MARK_WHITE_OUTLINE_TEXTURE,
-                    /* x = */ markX,
-                    /* y = */ y - 1,
-                    /* width = */ 7,
-                    /* height = */ 7,
-                    /* color = */ color,
-                )
+                drawSprite(context, PLAYER_MARK_WHITE_OUTLINE_TEXTURE, markX, y - 1, 7, 7, color)
 
-                PlayerFaceExtractor.extractRenderState(
-                    /* graphics = */ context,
-                    /* texture = */ playerListEntry.skin.body.texturePath(),
-                    /* x = */ markX + 1,
-                    /* y = */ y,
-                    /* size = */ 5,
-                    /* hat = */ playerListEntry.showHat(),
-                    /* flip = */ (playerMarker as? LivingEntity)
-                        ?.let { LivingEntityRenderer.isUpsideDownName(it.name.string) }
-                        ?: false,
-                    /* color = */ -1
+                PlayerFaceRenderer.draw(
+                    context,
+                    playerListEntry.skin,
+                    markX + 1,
+                    y,
+                    5,
                 )
             }
 
             if (config.showHeight) {
                 val heightDiffNormalized = direction.normalize().y
                 if (heightDiffNormalized > 0.5) { // about 45 deg
-                    context.blitSprite(
-                        /* renderPipeline = */ RenderPipelines.GUI_TEXTURED,
-                        /* location = */ PLAYER_MARK_UP_TEXTURE,
-                        /* x = */ markX + 1,
-                        /* y = */ y - 5,
-                        /* width = */ 5,
-                        /* height = */ 4,
-                    )
+                    context.blitSprite(PLAYER_MARK_UP_TEXTURE, markX + 1, y - 5, 5, 4)
                 } else if (heightDiffNormalized < -0.5) {
-                    context.blitSprite(
-                        /* renderPipeline = */ RenderPipelines.GUI_TEXTURED,
-                        /* location = */ PLAYER_MARK_DOWN_TEXTURE,
-                        /* x = */ markX + 1,
-                        /* y = */ y + 7,
-                        /* width = */ 5,
-                        /* height = */ 4,
-                    )
+                    context.blitSprite(PLAYER_MARK_DOWN_TEXTURE, markX + 1, y + 7, 5, 4)
                 }
             }
         }
@@ -296,22 +266,19 @@ object PlayerLocatorPlusClient : ClientModInitializer {
         } else {
             0f
         }
-        hudOffset.updateValues(client.frameTimeNs / 1000000f)
+        hudOffset.updateValues(tickCounter.getGameTimeDeltaPartialTick(false) * 50f)
 
         val fadeProgress = round(hudOffset.currentValue / HUD_OFFSET_TOTAL * 255f) / 255f
 
         if (namePlaques.isNotEmpty() && fadeProgress > 0) {
-            Profiler.get().push("plp-names")
             renderPlayerNamePlaques(context, namePlaques, y, fadeProgress)
-            Profiler.get().pop()
         }
 
         relativePositionsLock.unlock()
-        Profiler.get().pop()
     }
 
     private fun renderPlayerNamePlaques(
-        context: GuiGraphicsExtractor,
+        context: GuiGraphics,
         markers: List<NamePlaque>,
         barY: Int,
         fadeProgress: Float = 1f
@@ -364,7 +331,7 @@ object PlayerLocatorPlusClient : ClientModInitializer {
             )
 
             // for some reason, if the opacity is under 4, drawText just assumes the color does not include alpha
-            if (textAlpha > 3) context.text(
+            if (textAlpha > 3) context.drawString(
                 textRenderer,
                 marker.playerName,
                 plaqueX + NAME_PLAQUE_PADDING_X,
@@ -375,45 +342,23 @@ object PlayerLocatorPlusClient : ClientModInitializer {
         }
     }
 
-    private fun getVanillaWaypoints(client: Minecraft): List<RelativePlayerLocation> {
-        if (!config.showVanillaWaypoints) return emptyList()
+    private fun drawSprite(context: GuiGraphics, texture: ResourceLocation, x: Int, y: Int, width: Int, height: Int, color: Int) {
+        context.setColor(
+            ((color shr 16) and 0xFF) / 255f,
+            ((color shr 8) and 0xFF) / 255f,
+            (color and 0xFF) / 255f,
+            ((color ushr 24) and 0xFF) / 255f,
+        )
+        context.blitSprite(texture, x, y, width, height)
+        context.setColor(1f, 1f, 1f, 1f)
+    }
+}
 
-        val ret = mutableListOf<RelativePlayerLocation>()
-        client.connection?.waypointManager?.forEachWaypoint(client.cameraEntity!!) { waypoint ->
-            val uuid = Either.unwrap(waypoint.id().mapRight {
-                UUID.nameUUIDFromBytes("plp-waypoint:$it".toByteArray())
-            })
-            if (relativePositions.contains(uuid)) return@forEachWaypoint
-
-            val tickManager = client.level!!.tickRateManager()
-            val relativeYaw = waypoint.yawAngleToCamera(
-                /* level = */ client.level!!,
-                /* camera = */ client.gameRenderer.mainCamera(),
-                /* partialTickSupplier = */ { ent ->
-                    client.deltaTracker.getGameTimeDeltaPartialTick(!tickManager.isEntityFrozen(ent))
-                }
-            )
-            val yaw = client.gameRenderer.mainCamera().yaw() + relativeYaw
-            val directionVector = Vector3f(
-                -Mth.sin(yaw * (Mth.PI / 180f)),
-                0f,
-                Mth.cos(yaw * (Mth.PI / 180f))
-            ).normalize()
-
-            var distance = waypoint.distanceSquared(client.cameraEntity!!)
-            if (distance == Double.POSITIVE_INFINITY) {
-                // vanilla thinks the distance is +infinity when the waypoint is >322 blocks away
-                // 110224 = 332^2
-                distance = 110224.0
-            }
-
-            ret.add(RelativePlayerLocation(
-                playerUuid = uuid,
-                direction = directionVector,
-                distance = sqrt(distance).toFloat(),
-                color = waypoint.icon().color.orElse(config.constantColor),
-            ))
-        }
-        return ret
+@EventBusSubscriber(modid = PlayerLocatorPlus.MOD_ID, value = [Dist.CLIENT])
+object PlayerLocatorPlusClientGameEvents {
+    @SubscribeEvent
+    @JvmStatic
+    fun onDisconnect(event: ClientPlayerNetworkEvent.LoggingOut) {
+        PlayerLocatorPlusClient.clearClientState()
     }
 }

@@ -2,15 +2,15 @@ package sh.sit.plp.color
 
 import com.mojang.authlib.GameProfile
 import com.mojang.brigadier.Command
+import com.mojang.brigadier.CommandDispatcher
+import com.mojang.brigadier.arguments.StringArgumentType
 import com.mojang.brigadier.context.CommandContext
 import com.mojang.brigadier.exceptions.SimpleCommandExceptionType
-import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback
+import net.minecraft.ChatFormatting
 import net.minecraft.commands.CommandSourceStack
 import net.minecraft.commands.Commands
 import net.minecraft.commands.arguments.GameProfileArgument
 import net.minecraft.network.chat.Component
-import net.minecraft.server.permissions.Permissions
-import net.minecraft.server.players.NameAndId
 import sh.sit.plp.BarUpdater
 import sh.sit.plp.PlayerLocatorPlus
 import sh.sit.plp.config.ConfigManager
@@ -19,92 +19,91 @@ import sh.sit.plp.config.ModConfig
 object PLPCommand {
     private val WRONG_COLOR_MODE = SimpleCommandExceptionType(Component.translatable("commands.player-locator-plus.color.wrong-color-mode"))
     private val NON_SINGLE_PLAYER = SimpleCommandExceptionType(Component.translatable("commands.player-locator-plus.color.non-single-player"))
+    private val INVALID_COLOR = SimpleCommandExceptionType(Component.translatable("commands.player-locator-plus.color.invalid-color"))
 
-    fun register() {
-        CommandRegistrationCallback.EVENT.register(CommandRegistrationCallback { dispatcher, _, _ ->
-            dispatcher.register(
-                Commands.literal("plp")
+    fun register(dispatcher: CommandDispatcher<CommandSourceStack>) {
+        dispatcher.register(
+            Commands.literal("plp")
                 .then(
                     Commands.literal("reload")
-                    .executes { c ->
-                        c.source.sendSuccess({ Component.literal("Player Locator config reloaded") }, false)
-                        ConfigManager.reload(fromDisk = true)
-                        BarUpdater.fullResend(c.source.server)
-                        Command.SINGLE_SUCCESS
-                    })
+                        .requires { it.hasPermission(2) }
+                        .executes { context ->
+                            context.source.sendSuccess({ Component.literal("Player Locator Plus config reloaded") }, false)
+                            ConfigManager.reload(fromDisk = true, minecraftServer = context.source.server)
+                            BarUpdater.fullResend(context.source.server)
+                            Command.SINGLE_SUCCESS
+                        },
+                )
                 .then(
                     Commands.literal("random")
-                    .requires { it.isPlayer && it.permissions().hasPermission(Permissions.COMMANDS_ADMIN) }
-                    .executes { c ->
-                        c.source.player?.let { BarUpdater.sendFakePlayers(it) }
-                        Command.SINGLE_SUCCESS
-                    })
+                        .requires { it.entity != null && it.hasPermission(2) }
+                        .executes { context ->
+                            context.source.player?.let(BarUpdater::sendFakePlayers)
+                            Command.SINGLE_SUCCESS
+                        },
+                )
                 .then(
                     Commands.literal("color")
-                    .then(
-                        Commands.argument("color", ColorArgumentType())
-                        .suggests { _, builder ->
-                            // Fix for a weird bug on Forge (+Sinytra Connector).
-                            // It only includes the custom id in CommandTreeS2CPacket if customSuggestions != null,
-                            // whereas Fabric includes it if the id itself is not null.
-                            // See also: https://minecraft.wiki/w/Java_Edition_protocol/Command_data#Node_Format
-                            builder.buildFuture()
-                        }
-                        .executes { c ->
-                            runChangeColor(c, true)
-                        }
                         .then(
-                            Commands.argument("player", GameProfileArgument.gameProfile())
-                            .requires { it.permissions().hasPermission(Permissions.COMMANDS_MODERATOR) }
-                            .executes { c ->
-                                runChangeColor(c, false)
-                            }))))
-        })
+                            Commands.argument("color", StringArgumentType.word())
+                                .suggests { _, builder ->
+                                    ChatFormatting.values().filter(ChatFormatting::isColor).forEach { builder.suggest(it.name) }
+                                    builder.suggest("#")
+                                    builder.buildFuture()
+                                }
+                                .executes { context -> runChangeColor(context, true) }
+                                .then(
+                                    Commands.argument("player", GameProfileArgument.gameProfile())
+                                        .requires { it.hasPermission(3) }
+                                        .executes { context -> runChangeColor(context, false) },
+                                ),
+                        ),
+                ),
+        )
     }
 
-    private fun NameAndId.toGameProfile(): GameProfile {
-        return GameProfile(id, name)
-    }
-
-    private fun runChangeColor(c: CommandContext<CommandSourceStack>, self: Boolean): Int {
+    private fun runChangeColor(context: CommandContext<CommandSourceStack>, self: Boolean): Int {
         if (PlayerLocatorPlus.config.colorMode != ModConfig.ColorMode.CUSTOM) {
             throw WRONG_COLOR_MODE.create()
         }
 
-        val player = if (self) {
-            c.source.playerOrException.gameProfile
+        val player: GameProfile = if (self) {
+            context.source.playerOrException.gameProfile
         } else {
-            val players = GameProfileArgument.getGameProfiles(c, "player")
-            players.singleOrNull()?.toGameProfile() ?: throw NON_SINGLE_PLAYER.create()
+            GameProfileArgument.getGameProfiles(context, "player").singleOrNull() ?: throw NON_SINGLE_PLAYER.create()
         }
 
-        val color = c.getArgument("color", Int::class.java)
+        val color = parseColor(StringArgumentType.getString(context, "color"))
+            ?: throw INVALID_COLOR.create()
 
-        PlayerDataState.of(c.source.server).run {
+        PlayerDataState.of(context.source.server).run {
             getPlayer(player.id).customColor = color
             setDirty()
         }
-        c.source.sendSuccess(
+        context.source.sendSuccess(
             if (self) {
-                { Component.translatable(
-                    "commands.player-locator-plus.color.self",
-                    formatColor(color)
-                ) }
+                { Component.translatable("commands.player-locator-plus.color.self", formatColor(color)) }
             } else {
-                { Component.translatable(
-                    "commands.player-locator-plus.color.other",
-                    Component.nullToEmpty(player.name),
-                    formatColor(color)
-                ) }
+                {
+                    Component.translatable(
+                        "commands.player-locator-plus.color.other",
+                        Component.nullToEmpty(player.name),
+                        formatColor(color),
+                    )
+                }
             },
-            false
+            false,
         )
 
         return Command.SINGLE_SUCCESS
     }
 
-    private fun formatColor(color: Int): Component {
-        val colorHex = "#" + color.toString(16).padStart(6, '0')
-        return Component.literal(colorHex).withColor(color)
+    private fun parseColor(value: String): Int? {
+        ChatFormatting.getByName(value)?.color?.let { return it }
+        if (!value.startsWith('#') || value.length != 7) return null
+        return value.substring(1).toIntOrNull(16)
     }
+
+    private fun formatColor(color: Int): Component =
+        Component.literal("#" + color.toString(16).padStart(6, '0')).withColor(color)
 }

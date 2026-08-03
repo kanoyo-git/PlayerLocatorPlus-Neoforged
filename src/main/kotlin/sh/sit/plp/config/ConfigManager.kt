@@ -1,77 +1,91 @@
 package sh.sit.plp.config
 
-import me.shedaniel.autoconfig.AutoConfig
-import me.shedaniel.autoconfig.ConfigHolder
-import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents
-import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents
-import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking
-import net.minecraft.server.players.PlayerList
-import net.minecraft.world.InteractionResult
+import com.akuleshov7.ktoml.Toml
+import com.akuleshov7.ktoml.TomlInputConfig
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import net.neoforged.fml.loading.FMLPaths
+import net.neoforged.neoforge.network.PacketDistributor
+import net.minecraft.server.MinecraftServer
+import net.minecraft.server.level.ServerPlayer
 import sh.sit.plp.PlayerLocatorPlus
 import sh.sit.plp.network.ModConfigS2CPayload
+import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.Path
 
+/**
+ * Keeps the original single TOML file format.  The local configuration is used by
+ * an integrated or dedicated server and is sent to connected clients when enabled.
+ */
 object ConfigManager {
-    private lateinit var config: ModConfig
+    private val toml = Toml(inputConfig = TomlInputConfig(ignoreUnknownNames = true))
+    private val configPath: Path
+        get() = FMLPaths.CONFIGDIR.get().resolve("player-locator-plus.toml")
+
+    private lateinit var localConfig: ModConfig
+    private var server: MinecraftServer? = null
+
     var configOverride: ModConfig? = null
-        set(value) {
-            if (value != null) {
-                configHolder.config = value
-            } else {
-                configHolder.config = config
-            }
-            field = value
-        }
-
-    private lateinit var configHolder: ConfigHolder<ModConfig>
-
-    private var playerManager: PlayerList? = null
 
     fun init() {
-        AutoConfig.register(ModConfig::class.java, ::KTomlConfigSerializer)
-        configHolder = AutoConfig.getConfigHolder(ModConfig::class.java)
-        config = configHolder.config
-        configHolder.registerSaveListener { _, modConfig ->
-            config = modConfig
-            reload()
-            InteractionResult.PASS
-        }
-        configHolder.registerLoadListener { _, modConfig ->
-            config = modConfig
-            reload()
-            InteractionResult.PASS
-        }
+        if (::localConfig.isInitialized) return
 
-        ServerTickEvents.END_SERVER_TICK.register(ServerTickEvents.EndTick { server ->
-            playerManager = server.playerList
-        })
-
-        ServerPlayConnectionEvents.JOIN.register(ServerPlayConnectionEvents.Join { handler, _, _ ->
-            if (!config.sendServerConfig) return@Join
-            ServerPlayNetworking.send(
-                handler.player,
-                ModConfigS2CPayload(config)
-            )
-        })
+        localConfig = load()
+        save(localConfig)
     }
 
-    fun reload(fromDisk: Boolean = false) {
+    fun reload(fromDisk: Boolean = false, minecraftServer: MinecraftServer? = null) {
         if (fromDisk) {
-            configHolder.load()
-            config = configHolder.get()
+            localConfig = load()
+            save(localConfig)
         }
+        server = minecraftServer ?: server
 
-        if (!config.sendServerConfig) {
-            PlayerLocatorPlus.logger.info("server config reloaded")
+        val currentServer = server
+        if (!localConfig.sendServerConfig || currentServer == null) {
+            PlayerLocatorPlus.logger.info("Player Locator Plus config reloaded")
             return
         }
-        for (player in playerManager?.players ?: emptyList()) {
-            ServerPlayNetworking.send(player, ModConfigS2CPayload(config))
-        }
 
-        PlayerLocatorPlus.logger.info("server config reloaded and resent to clients")
+        currentServer.playerList.players.forEach(::sendConfig)
+        PlayerLocatorPlus.logger.info("Player Locator Plus config reloaded and resent to clients")
     }
 
-    fun getConfig(): ModConfig {
-        return configOverride?.takeIf { config.acceptServerConfig } ?: config
+    fun sendConfig(player: ServerPlayer) {
+        server = player.server
+        if (localConfig.sendServerConfig) {
+            PacketDistributor.sendToPlayer(player, ModConfigS2CPayload(localConfig))
+        }
+    }
+
+    fun clearServer() {
+        server = null
+    }
+
+    fun getConfig(): ModConfig = configOverride?.takeIf { localConfig.acceptServerConfig } ?: localConfig
+
+    private fun load(): ModConfig {
+        val defaultConfig = ModConfig()
+        if (!Files.exists(configPath)) return defaultConfig
+
+        return try {
+            toml.decodeFromString<ModConfig>(Files.readString(configPath)).also(ModConfig::validatePostLoad)
+        } catch (error: IOException) {
+            PlayerLocatorPlus.logger.error("Could not read {}. Using defaults.", configPath, error)
+            defaultConfig
+        } catch (error: kotlinx.serialization.SerializationException) {
+            PlayerLocatorPlus.logger.error("Could not parse {}. Using defaults.", configPath, error)
+            defaultConfig
+        }
+    }
+
+    private fun save(config: ModConfig) {
+        try {
+            Files.createDirectories(configPath.parent)
+            Files.writeString(configPath, toml.encodeToString(config))
+        } catch (error: IOException) {
+            PlayerLocatorPlus.logger.error("Could not write {}", configPath, error)
+        }
     }
 }

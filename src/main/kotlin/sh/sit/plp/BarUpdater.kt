@@ -1,15 +1,15 @@
 package sh.sit.plp
 
-import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking
+import net.neoforged.neoforge.network.PacketDistributor
 import net.minecraft.world.entity.EquipmentSlot
-import net.minecraft.world.entity.LivingEntity
 import net.minecraft.world.effect.MobEffects
+import net.minecraft.world.item.Items
 import net.minecraft.server.MinecraftServer
 import net.minecraft.server.level.ServerPlayer
 import net.minecraft.world.phys.Vec3
 import net.minecraft.world.level.Level
 import org.joml.Vector3f
-import sh.sit.plp.PlayerLocatorPlus.config
+import sh.sit.plp.PlayerLocatorPlus.Companion.config
 import sh.sit.plp.color.PlayerDataState
 import sh.sit.plp.config.ModConfig
 import sh.sit.plp.network.PlayerLocationsS2CPayload
@@ -33,7 +33,7 @@ object BarUpdater {
                     ModConfig.ColorMode.UUID -> ColorUtils.uuidToColor(player.uuid)
                     ModConfig.ColorMode.TEAM_COLOR -> player.teamColor
                     ModConfig.ColorMode.CONSTANT -> config.constantColor
-                    ModConfig.ColorMode.CUSTOM -> PlayerDataState.of(player.level().server).getPlayer(player.uuid).customColor
+                    ModConfig.ColorMode.CUSTOM -> PlayerDataState.of(player.server ?: return ColorUtils.uuidToColor(player.uuid)).getPlayer(player.uuid).customColor
                         ?: ColorUtils.uuidToColor(player.uuid)
                 }
             }
@@ -53,7 +53,7 @@ object BarUpdater {
     }
 
     fun fullResend(player: ServerPlayer) {
-        val playerList = player.level().players()
+        val playerList = player.server?.playerList?.players ?: return
 
         val relativePositions = playerList.mapNotNull {
             if (it == player) return@mapNotNull null
@@ -64,7 +64,7 @@ object BarUpdater {
             calculateRelativeLocation(it.uuid, StoredPlayerPosition(player), StoredPlayerPosition(it))
         }
 
-        ServerPlayNetworking.send(
+        PacketDistributor.sendToPlayer(
             player,
             PlayerLocationsS2CPayload(
                 locationUpdates = if (config.enabled) {
@@ -161,7 +161,7 @@ object BarUpdater {
 
             if (updatedPositions.isEmpty() && removeUuids.isEmpty()) continue
 
-            ServerPlayNetworking.send(player, PlayerLocationsS2CPayload(
+            PacketDistributor.sendToPlayer(player, PlayerLocationsS2CPayload(
                 locationUpdates = updatedPositions,
                 removeUuids = removeUuids.toList(),
                 fullReset = fullReset,
@@ -175,7 +175,7 @@ object BarUpdater {
         return server.playerList.players
             .filterNot {
                 (config.sneakingHides && it.isShiftKeyDown) ||
-                (config.pumpkinHides && !LivingEntity.PLAYER_NOT_WEARING_DISGUISE_ITEM.test(it)) ||
+                (config.pumpkinHides && it.getItemBySlot(EquipmentSlot.HEAD).`is`(Items.CARVED_PUMPKIN)) ||
                 (config.mobHeadsHide && it.getItemBySlot(EquipmentSlot.HEAD).`is`(PlayerLocatorPlus.HIDING_EQUIPMENT_TAG)) ||
                 (config.invisibilityHides && it.hasEffect(MobEffects.INVISIBILITY)) ||
                 it.isSpectator
@@ -214,7 +214,7 @@ object BarUpdater {
                 )
             }
 
-        ServerPlayNetworking.send(
+        PacketDistributor.sendToPlayer(
             player,
             PlayerLocationsS2CPayload(
                 locationUpdates = positions,
