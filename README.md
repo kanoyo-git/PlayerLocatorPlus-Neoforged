@@ -1,4 +1,4 @@
-# Player Locator Plus
+# PlayerLocatorPlus Neoforged
 
 Track other players' locations on your experience bar like a compass!
 

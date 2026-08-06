@@ -3,6 +3,7 @@ package sh.sit.plp
 import net.minecraft.client.Minecraft
 import net.minecraft.client.DeltaTracker
 import net.minecraft.client.gui.GuiGraphics
+import net.minecraft.client.gui.LayeredDraw
 import net.minecraft.client.gui.components.PlayerFaceRenderer
 import net.minecraft.resources.ResourceLocation
 import net.minecraft.world.phys.Vec3
@@ -13,6 +14,7 @@ import net.neoforged.fml.common.EventBusSubscriber
 import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers
+import net.neoforged.neoforge.client.event.ClientTickEvent
 import org.joml.Vector2d
 import org.joml.Vector3f
 import sh.sit.plp.PlayerLocatorPlus.Companion.config
@@ -21,10 +23,10 @@ import sh.sit.plp.network.ModConfigS2CPayload
 import sh.sit.plp.network.PlayerLocationsS2CPayload
 import sh.sit.plp.network.RelativePlayerLocation
 import sh.sit.plp.util.Animatable
-import sh.sit.plp.util.MathUtils
 import java.util.*
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.round
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -53,7 +55,15 @@ object PlayerLocatorPlusClient {
     private const val NAME_PLAQUE_OVERLAP_THRESHOLD = 2
 
     private const val HUD_OFFSET_TOTAL = 16f
+    private const val EXPERIENCE_BAR_DISPLAY_TICKS = 100
+    private const val LOCATOR_VISIBLE_DEGREES = 60.0
+    private const val LOCATOR_MARKER_SPAN = 173.0
     private var hudOffset = Animatable(0f)
+
+    // 26.2 makes the locator the default contextual bar and gives the experience
+    // bar a five-second priority window after the player gains experience.
+    private var experienceDisplayStartTick = -EXPERIENCE_BAR_DISPLAY_TICKS
+    private var lastKnownTotalExperience: Int? = null
 
     // for mixin
     val currentHudOffset get() = hudOffset.currentValue
@@ -71,10 +81,22 @@ object PlayerLocatorPlusClient {
     @SubscribeEvent
     @JvmStatic
     fun registerGuiLayers(event: RegisterGuiLayersEvent) {
+        event.wrapLayer(VanillaGuiLayers.EXPERIENCE_BAR) { vanillaExperienceBar ->
+            LayeredDraw.Layer { context, tickCounter ->
+                if (shouldRenderVanillaExperienceBar()) {
+                    vanillaExperienceBar.render(context, tickCounter)
+                }
+            }
+        }
         event.registerAbove(
             VanillaGuiLayers.EXPERIENCE_LEVEL,
             ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "player_locator"),
             ::render,
+        )
+        event.registerBelow(
+            VanillaGuiLayers.EXPERIENCE_LEVEL,
+            ResourceLocation.fromNamespaceAndPath(PlayerLocatorPlus.RESOURCE_NAMESPACE, "player_locator_background"),
+            ::renderBackground,
         )
     }
 
@@ -103,6 +125,8 @@ object PlayerLocatorPlusClient {
         try {
             relativePositions.clear()
             ConfigManager.configOverride = null
+            experienceDisplayStartTick = -EXPERIENCE_BAR_DISPLAY_TICKS
+            lastKnownTotalExperience = null
         } finally {
             relativePositionsLock.unlock()
         }
@@ -142,23 +166,61 @@ object PlayerLocatorPlusClient {
         return true
     }
 
-    fun render(context: GuiGraphics, tickCounter: DeltaTracker) {
-        if (!config.visible) return
+    private fun shouldPrioritizeExperienceInfo(): Boolean {
+        val player = Minecraft.getInstance().player ?: return false
+        return player.tickCount < experienceDisplayStartTick + EXPERIENCE_BAR_DISPLAY_TICKS
+    }
 
-        if (!isBarVisible()) return
+    private fun shouldPrioritizeJumpInfo(): Boolean {
+        val player = Minecraft.getInstance().player ?: return false
+        val vehicle = player.jumpableVehicle() ?: return false
+        return player.jumpRidingScale > 0f || vehicle.jumpCooldown > 0
+    }
+
+    private fun shouldRenderLocatorBar(): Boolean =
+        isBarVisible() && !shouldPrioritizeExperienceInfo() && !shouldPrioritizeJumpInfo()
+
+    /** Whether vanilla's XP-bar layer should be allowed to render. */
+    fun shouldRenderVanillaExperienceBar(): Boolean =
+        !isBarVisible() || shouldPrioritizeExperienceInfo()
+
+    fun updateExperienceDisplayTimer() {
+        val player = Minecraft.getInstance().player
+        if (player == null) {
+            lastKnownTotalExperience = null
+            return
+        }
+
+        val totalExperience = player.totalExperience
+        if (lastKnownTotalExperience?.let { totalExperience > it } == true) {
+            experienceDisplayStartTick = player.tickCount
+        }
+        lastKnownTotalExperience = totalExperience
+    }
+
+    /**
+     * The locator background is rendered below the experience level, matching
+     * vanilla's contextual-bar order. Player markers remain above the text.
+     */
+    fun renderBackground(context: GuiGraphics, tickCounter: DeltaTracker) {
+        if (!shouldRenderLocatorBar()) return
+
+        context.blitSprite(
+            EXPERIENCE_BAR_BACKGROUND_TEXTURE,
+            context.guiWidth() / 2 - 91,
+            context.guiHeight() - 32 + 3,
+            182,
+            5,
+        )
+    }
+
+    fun render(context: GuiGraphics, tickCounter: DeltaTracker) {
+        if (!shouldRenderLocatorBar()) return
 
         val client = Minecraft.getInstance()
         val player = client.player ?: return
-        val interactionManager = client.gameMode ?: return
 
-        val barWidth = 182
-        val x = context.guiWidth() / 2 - 91
         val y = context.guiHeight() - 32 + 3
-
-        val barRendered = player.jumpableVehicle() != null || interactionManager.hasExperience()
-        if (!barRendered) {
-            context.blitSprite(EXPERIENCE_BAR_BACKGROUND_TEXTURE, x, y, barWidth, 5)
-        }
 
         relativePositionsLock.lock()
 
@@ -190,17 +252,16 @@ object PlayerLocatorPlusClient {
                 relativeAngle = 0.0
             }
 
-            val horizontalFov = MathUtils.calculateHorizontalFov(
-                verticalFov = client.options.fov().get(),
-                width = context.guiWidth(),
-                height = context.guiHeight()
-            )
-            val progress = (relativeAngle + horizontalFov / 2) / horizontalFov
-            if (progress !in 0.0..1.0) {
+            // Match the 26.2 LocatorBar: markers use a fixed ±60° sector,
+            // independent of the player's FOV, and a 173-pixel marker span.
+            if (relativeAngle <= -LOCATOR_VISIBLE_DEGREES || relativeAngle > LOCATOR_VISIBLE_DEGREES) {
                 continue
             }
+            val progress = (relativeAngle + LOCATOR_VISIBLE_DEGREES) / (LOCATOR_VISIBLE_DEGREES * 2)
 
-            val markX = x + (progress * barWidth.toFloat()).roundToInt() - 4
+            val markX = context.guiWidth() / 2 - 4 + floor(
+                relativeAngle * LOCATOR_MARKER_SPAN / (LOCATOR_VISIBLE_DEGREES * 2)
+            ).toInt()
 
             val showHeadIcon = config.alwaysShowHeads || (config.showHeadsOnTab && isTabPressed)
 
@@ -356,6 +417,12 @@ object PlayerLocatorPlusClient {
 
 @EventBusSubscriber(modid = PlayerLocatorPlus.MOD_ID, value = [Dist.CLIENT])
 object PlayerLocatorPlusClientGameEvents {
+    @SubscribeEvent
+    @JvmStatic
+    fun onClientTick(event: ClientTickEvent.Post) {
+        PlayerLocatorPlusClient.updateExperienceDisplayTimer()
+    }
+
     @SubscribeEvent
     @JvmStatic
     fun onDisconnect(event: ClientPlayerNetworkEvent.LoggingOut) {
