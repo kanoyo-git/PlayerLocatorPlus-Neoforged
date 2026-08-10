@@ -53,16 +53,19 @@ object BarUpdater {
     }
 
     fun fullResend(player: ServerPlayer) {
-        val playerList = player.server?.playerList?.players ?: return
+        val server = player.server ?: return
 
-        val relativePositions = playerList.mapNotNull {
-            if (it == player) return@mapNotNull null
+        val relativePositions = getPositions(server).asSequence()
+            .filter { (uuid, position) ->
+                uuid != player.uuid && position.world == player.level()
+            }
+            .mapNotNull { (uuid, position) ->
+                val distance = player.position().distanceTo(position.pos).toFloat()
+                if (config.maxDistance != 0 && distance > config.maxDistance) return@mapNotNull null
 
-            val distance = player.position().distanceTo(it.position()).toFloat()
-            if (config.maxDistance != 0 && distance > config.maxDistance) return@mapNotNull null
-
-            calculateRelativeLocation(it.uuid, StoredPlayerPosition(player), StoredPlayerPosition(it))
-        }
+                calculateRelativeLocation(uuid, StoredPlayerPosition(player), position)
+            }
+            .toList()
 
         PacketDistributor.sendToPlayer(
             player,
@@ -159,7 +162,7 @@ object BarUpdater {
 
             val fullReset = previousPlayer?.world != player.level()
 
-            if (updatedPositions.isEmpty() && removeUuids.isEmpty()) continue
+            if (!fullReset && updatedPositions.isEmpty() && removeUuids.isEmpty()) continue
 
             PacketDistributor.sendToPlayer(player, PlayerLocationsS2CPayload(
                 locationUpdates = updatedPositions,

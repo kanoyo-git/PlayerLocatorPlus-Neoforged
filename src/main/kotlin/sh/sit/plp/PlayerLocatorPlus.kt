@@ -25,6 +25,7 @@ class PlayerLocatorPlus(modEventBus: IEventBus) {
 
         modEventBus.addListener(::registerPayloads)
         NeoForge.EVENT_BUS.addListener(::onPlayerLogin)
+        NeoForge.EVENT_BUS.addListener(::onPlayerChangedDimension)
         NeoForge.EVENT_BUS.addListener(::onServerTick)
         NeoForge.EVENT_BUS.addListener(::onServerStopped)
         NeoForge.EVENT_BUS.addListener(::onRegisterCommands)
@@ -46,6 +47,11 @@ class PlayerLocatorPlus(modEventBus: IEventBus) {
         val player = event.entity as? net.minecraft.server.level.ServerPlayer ?: return
         BarUpdater.fullResend(player)
         ConfigManager.sendConfig(player)
+    }
+
+    private fun onPlayerChangedDimension(event: PlayerEvent.PlayerChangedDimensionEvent) {
+        val player = event.entity as? net.minecraft.server.level.ServerPlayer ?: return
+        BarUpdater.fullResend(player)
     }
 
     private fun onServerTick(event: ServerTickEvent.Post) {
