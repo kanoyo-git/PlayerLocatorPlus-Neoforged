@@ -107,6 +107,9 @@ tasks.named('jar', Jar).configure {
     from('LICENSE') {
         rename { "${it}_${project.archives_base_name}" }
     }
+    from('NOTICE.md') {
+        rename { "NOTICE_${project.archives_base_name}.md" }
+    }
 }
 
 tasks.named('jarJar').configure {

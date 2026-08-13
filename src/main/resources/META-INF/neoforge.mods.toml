@@ -1,7 +1,7 @@
 modLoader="javafml"
 loaderVersion="${loader_version_range}"
 license="${mod_license}"
-issueTrackerURL="https://github.com/timas130/PlayerLocatorPlus/issues"
+issueTrackerURL="https://github.com/kanoyo-git/PlayerLocatorPlus-Neoforged/issues"
 
 [[mods]]
 modId="${mod_id}"
