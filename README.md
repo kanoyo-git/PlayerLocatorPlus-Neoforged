@@ -1,10 +1,10 @@
-# Player Locator Plus NeoForged
+# PlayerLocatorPlus NeoForged
 
 [Modrinth](https://modrinth.com/mod/playerlocatorplus-neoforged) · [CurseForge](https://www.curseforge.com/minecraft/mc-mods/playerlocatorplus-neoforged) · [Issues](https://github.com/kanoyo-git/PlayerLocatorPlus-Neoforged/issues)
 
-Player Locator Plus NeoForged adds a compass-like multiplayer HUD above the experience bar. It shows the direction of other players in the same dimension, making it easier to find teammates without opening a map or waypoint screen.
+PlayerLocatorPlus NeoForged adds a compass-like multiplayer HUD above the experience bar. It shows the direction of other players in the same dimension, making it easier to find teammates without opening a map or waypoint screen.
 
-This project is a NeoForged 1.21.1 port of [Player Locator Plus by timas130 and contributors](https://github.com/timas130/PlayerLocatorPlus).
+This project is a NeoForge 1.21.1 port of [Player Locator Plus by timas130 and contributors](https://github.com/timas130/PlayerLocatorPlus).
 
 ![Player locator overview](https://raw.githubusercontent.com/kanoyo-git/PlayerLocatorPlus-Neoforged/main/screenshot1.png)
 
